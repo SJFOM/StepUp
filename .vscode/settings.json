@@ -1,0 +1,28 @@
+{
+"platformSettings.autoLoad": true,
+    "platformSettings.platforms": {
+        "darwin": {
+            "nodes": {
+                "C_Cpp.clang_format_path": "${workspaceRoot}/bin/clang-format/darwin_x64/clang-format"
+            }
+        },
+        "linux": {
+            "nodes": {
+                "C_Cpp.clang_format_path": "${workspaceRoot}/bin/clang-format/linux_x64/clang-format"
+            }
+        },
+        "win32": {
+            "nodes": {
+                "C_Cpp.clang_format_path": "${workspaceRoot}/bin/clang-format/win32/clang-format.exe"
+            }
+        }
+    },
+    "editor.formatOnSave": true,
+    "python.terminal.activateEnvironment": false,
+    "editor.detectIndentation": false,
+    "prettier.configPath": "./.prettierrc",
+    "C_Cpp.clang_format_style": "file",
+    "C_Cpp.clang_format_fallbackStyle": "none",
+    "python.pythonPath": "env/bin/python",
+    "python.formatting.provider": "black",
+}
