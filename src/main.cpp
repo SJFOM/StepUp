@@ -1,19 +1,16 @@
-#define BLYNK_PRINT Serial
-
-// #include <WiFi.h>
-// #include <WiFiClient.h>
-// #include <BlynkSimpleEsp32.h>
-
 #include <Arduino.h>
 #include "CRC.h"
 #include "ESP32TimerInterrupt.h"
 #include "Functions.h"
 #include "TMC2300.h"
 
-#define PIN_ENABLE (32U)
-
 #define LED_BUILTIN_GREEN (18U)
 #define LED_BUILTIN_RED   (23U)
+
+#define LED_STATUS       LED_BUILTIN_GREEN
+#define LED_MOTOR_ACTIVE LED_BUILTIN_RED
+
+#define PIN_ENABLE (32U)
 
 #define TIMER0_INTERVAL_MS 1000
 
@@ -87,13 +84,13 @@ void periodicJob()
     if (s_enable)
     {
         // Toggle the status LED while the motor is active
-        digitalWrite(LED_BUILTIN_GREEN, HIGH);
+        digitalWrite(LED_MOTOR_ACTIVE, HIGH);
         delay(250);
-        digitalWrite(LED_BUILTIN_GREEN, LOW);
+        digitalWrite(LED_MOTOR_ACTIVE, LOW);
         delay(250);
-        digitalWrite(LED_BUILTIN_GREEN, HIGH);
+        digitalWrite(LED_MOTOR_ACTIVE, HIGH);
         delay(250);
-        digitalWrite(LED_BUILTIN_GREEN, LOW);
+        digitalWrite(LED_MOTOR_ACTIVE, LOW);
     }
 
     // Re-write the CHOPCONF register periodically
@@ -134,10 +131,10 @@ void setup()
     }
 
     // Status LED
-    pinMode(LED_BUILTIN_GREEN, OUTPUT);
+    pinMode(LED_STATUS, OUTPUT);
 
-    // Debug LED
-    pinMode(LED_BUILTIN_RED, OUTPUT);
+    // Motor LED
+    pinMode(LED_MOTOR_ACTIVE, OUTPUT);
 
     // Enable Pin
     pinMode(PIN_ENABLE, OUTPUT);
@@ -168,10 +165,13 @@ void setup()
         Serial.println(F("Can't set ITimer0. Select another freq. or timer"));
     }
 
-    Serial.println("Initialization complete");
-    digitalWrite(LED_BUILTIN_GREEN, HIGH);
+    // Set the motor to default off state
+    setCurrent(0);
+    setVelocity(0);
+    setEnable(false);
 
-    // printMotorControlOptions();
+    Serial.println("Initialization complete");
+    digitalWrite(LED_STATUS, HIGH);
 }
 
 void loop()
@@ -203,7 +203,7 @@ void loop()
                 setVelocity(20);
                 setEnable(true);
                 break;
-            case 3:  // tart motor - fast
+            case 3:  // start motor - fast
                 Serial.println("tart motor - fast");
                 setCurrent(16);
                 setVelocity(40);
