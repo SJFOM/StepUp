@@ -28,9 +28,12 @@ ESP32Timer ITimer0(0);
 /* User variables - START */
 /**************************/
 // TMC variables
-static int s_target_velocity = 0;
-static bool s_direction = true;
-static bool s_enable = false;
+static struct tmc_config
+{
+    int target_velocity = 0;
+    bool direction = true;
+    bool enable = false;
+} s_tmc_config;
 
 // Job processing boolean
 volatile bool s_run_job = false;
@@ -49,8 +52,12 @@ volatile bool s_run_job = false;
  * @return true - if config success
  * @return false - if config fail
  */
-bool setCurrent(int current)
+bool setCurrent(uint8_t current)
 {
+    if (current > 31)
+    {
+        return false;
+    }
     Serial.print("New MaxCurrent set: ");
     Serial.println(current);
 
@@ -58,46 +65,55 @@ bool setCurrent(int current)
                      ((current << TMC2300_IRUN_SHIFT) & TMC2300_IRUN_MASK) |
                      8 << TMC2300_IHOLD_SHIFT;
     tmc2300_writeInt(TMC2300_IHOLD_IRUN, value);
-    return (bool)(tmc2300_readInt(TMC2300_IHOLD_IRUN) != 0);
+    return (bool)(tmc2300_readInt(TMC2300_IHOLD_IRUN) != -1);
 }
 
 bool setVelocity(int velocity)
 {
+    if (abs(velocity) >= pow(2, 24) - 1)
+    {
+        return false;
+    }
+
+    // VACTUAL: 2^24 - 1
     Serial.print("New TargetVelocity set: ");
     Serial.println(velocity);
 
-    s_target_velocity = velocity;
+    s_tmc_config.target_velocity = velocity;
 
     tmc2300_writeInt(TMC2300_VACTUAL,
-                     s_direction ? s_target_velocity : -s_target_velocity);
-    return (bool)(tmc2300_readInt(TMC2300_VACTUAL) != 0);
+                     s_tmc_config.direction ? s_tmc_config.target_velocity
+                                            : -s_tmc_config.target_velocity);
+    return (bool)(tmc2300_readInt(TMC2300_VACTUAL) != -1);
 }
 
 bool setDirection(bool direction)
 {
     Serial.println("Changed Direction");
 
-    s_direction = direction != 0;
+    s_tmc_config.direction = direction != 0;
 
     tmc2300_writeInt(TMC2300_VACTUAL,
-                     s_direction ? s_target_velocity : -s_target_velocity);
-    return (bool)(tmc2300_readInt(TMC2300_VACTUAL) != 0);
+                     s_tmc_config.direction ? s_tmc_config.target_velocity
+                                            : -s_tmc_config.target_velocity);
+    return (bool)(tmc2300_readInt(TMC2300_VACTUAL) != -1);
 }
 
 void setEnable(int enable)
 {
-    s_enable = enable != 0;
+    s_tmc_config.enable = enable != 0;
 
-    if (s_enable)
+    if (s_tmc_config.enable)
     {
-        Serial.println("Enable Motor: True");
+        Serial.println("Enable Motor");
     }
     else
     {
-        Serial.println("Enable Motor: False");
+        Serial.println("Disable Motor");
     }
 
-    digitalWrite(PIN_TMC_ENABLE, s_enable ? HIGH : LOW);
+    digitalWrite(PIN_TMC_ENABLE, s_tmc_config.enable ? HIGH : LOW);
+    delay(100);
 }
 
 void tmcPowerOn(bool power_on)
@@ -118,7 +134,7 @@ void tmcPowerOn(bool power_on)
 // Called once per second by the timer
 void periodicJob()
 {
-    if (s_enable)
+    if (s_tmc_config.enable)
     {
         // Toggle the status LED while the motor is active
         digitalWrite(LED_MOTOR_ACTIVE, HIGH);
@@ -131,7 +147,8 @@ void periodicJob()
     }
 
     // Re-write the CHOPCONF register periodically
-    tmc2300_writeInt(TMC2300_CHOPCONF, 0x14008001);
+    // tmc2300_writeInt(TMC2300_CHOPCONF, 0x14008001);
+    tmc2300_writeInt(TMC2300_CHOPCONF, 0x10008001);  // 256 usteps
 }
 
 void printMotorControlOptions()
@@ -141,6 +158,7 @@ void printMotorControlOptions()
     Serial.println(" 1 -> swap direction");
     Serial.println(" 2 -> start motor - slow");
     Serial.println(" 3 -> start motor - fast");
+    Serial.println(" 4 -> start motor - custom input");
 }
 
 bool IRAM_ATTR TimerHandler0(void *timerNo)
@@ -167,7 +185,7 @@ void setup()
     }
 
     // TMC2300 IC UART connection
-    Serial1.begin(115200);
+    Serial1.begin(460800);
     while (!Serial1)
     {
         ;  // wait for serial port to connect. Needed for native USB
@@ -188,7 +206,7 @@ void setup()
     // Initialize CRC calculation for TMC2300 UART datagrams
     tmc_fillCRC8Table(0x07, true, 0);
 
-    Serial.print(F("\nStarting TimerInterruptTest on "));
+    Serial.print(F("\nStarting TimerInterrupt on "));
     Serial.println(ARDUINO_BOARD);
     Serial.println(ESP32_TIMER_INTERRUPT_VERSION);
     Serial.print(F("CPU Frequency = "));
@@ -218,8 +236,7 @@ void setup()
     setEnable(false);
 
     // Read IFCNT register
-    init_success &= (bool)(tmc2300_readInt(TMC2300_IFCNT) != 0);
-
+    init_success &= (bool)(tmc2300_readInt(TMC2300_IFCNT) != -1);
     // Set the motor current & velocities to low values
     init_success &= setVelocity(0);
     init_success &= setCurrent(0);
@@ -263,18 +280,27 @@ void loop()
                 break;
             case 1:  // swap direction
                 Serial.println("Swap direction");
-                setDirection(!s_direction);
+                setDirection(!s_tmc_config.direction);
                 break;
             case 2:  // start motor - slow
                 Serial.println("start motor - slow");
                 setCurrent(8);
-                setVelocity(20);
+                setVelocity(10000);
                 setEnable(true);
                 break;
             case 3:  // start motor - fast
-                Serial.println("tart motor - fast");
+                Serial.println("start motor - fast");
                 setCurrent(16);
-                setVelocity(40);
+                setVelocity(100000);
+                setEnable(true);
+                break;
+            case 4:  // start motor - custom input
+                Serial.println("start motor - input");
+                while (!Serial.available())
+                    ;
+                input = Serial.readString();
+                setCurrent(31);
+                setVelocity(input.toInt());
                 setEnable(true);
                 break;
             default:

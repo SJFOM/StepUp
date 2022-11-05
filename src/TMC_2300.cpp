@@ -24,8 +24,9 @@ void tmc2300_readWriteArray(uint8_t *data,
 
     // Wait for the written data to be received and discard it.
     // This is the echo of our tx caused by using a single wire UART.
-    // while (TMCSerial.available() < writeLength);
-    // TMCSerial.readBytes(data, writeLength);
+    while (TMCSerial.available() < writeLength)
+        ;
+    TMCSerial.readBytes(data, writeLength);
 
     // If no reply data is expected abort here
     if (readLength == 0) return;
@@ -70,19 +71,31 @@ int32_t tmc2300_readInt(uint8_t address)
     data[2] = address;
     data[3] = tmc_CRC8(data, 3, 0);
 
+    uint8_t data0[8] = {0};
+    for (int i = 0; i < 8; i++)
+    {
+        data0[i] = data[i];
+    }
+
     tmc2300_readWriteArray(data, 4, 8);
 
+    for (int i = 0; i < 8; i++)
+    {
+        ;
+        // Serial.printf("%d : 0x%02x -> 0x%02x\n", i, data0[i], data[i]);
+    }
+
     // Byte 0: Sync nibble correct?
-    if (data[0] != 0x05) return 0;
+    if (data[0] != 0x05) return -1;
 
     // Byte 1: Master address correct?
-    if (data[1] != 0xFF) return 0;
+    if (data[1] != 0xFF) return -1;
 
     // Byte 2: Address correct?
-    if (data[2] != address) return 0;
+    if (data[2] != address) return -1;
 
     // Byte 7: CRC correct?
-    if (data[7] != tmc_CRC8(data, 7, 0)) return 0;
+    if (data[7] != tmc_CRC8(data, 7, 0)) return -1;
 
     return (data[3] << 24) | (data[4] << 16) | (data[5] << 8) | data[6];
 }
