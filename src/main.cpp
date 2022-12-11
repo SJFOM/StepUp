@@ -25,7 +25,7 @@
 
 #define TIMER0_INTERVAL_MS 1000
 
-#define STEPPER_MAX_SPEED (200000UL)
+#define STEPPER_MAX_SPEED (250000UL)
 
 // Init ESP32 timer 0
 ESP32Timer ITimer0(0);
@@ -33,6 +33,7 @@ ESP32Timer ITimer0(0);
 volatile bool joystick_active = false;
 volatile long joystick_read_value = 0;
 long joystick_offset = 0;
+unsigned long last_button_timestamp = 0;
 
 /**************************/
 /* User variables - START */
@@ -46,7 +47,8 @@ static struct tmc_config
 } s_tmc_config;
 
 // Job processing boolean
-volatile bool s_run_job = false;
+volatile bool run_job = false;
+volatile bool print_once = false;
 /************************/
 /* User variables - END */
 /************************/
@@ -182,7 +184,7 @@ void printMotorControlOptions()
 
 bool IRAM_ATTR TimerHandler0(void *timerNo)
 {
-    s_run_job = true;
+    run_job = true;
     return true;
 }
 
@@ -196,9 +198,14 @@ bool IRAM_ATTR TimerHandler0Analog(void *timerNo)
 
 void joystickButtonHandler()
 {
-    joystick_active = !joystick_active;
-    s_tmc_config.enable = joystick_active;
-    digitalWrite(PIN_TMC_ENABLE, s_tmc_config.enable ? HIGH : LOW);
+    if (millis() - last_button_timestamp > 500)
+    {
+        last_button_timestamp = millis();
+        print_once = true;
+        joystick_active = !joystick_active;
+        s_tmc_config.enable = joystick_active;
+        digitalWrite(PIN_TMC_ENABLE, s_tmc_config.enable ? HIGH : LOW);
+    }
 }
 
 /*************************/
@@ -332,9 +339,17 @@ void setup()
 void loop()
 {
     static unsigned long last_adc_value = 0;
-    if (s_run_job)
+
+    if (print_once)
     {
-        s_run_job = false;
+        print_once = false;
+        Serial.printf("Joystick %s\n",
+                      (joystick_active) ? "ACTIVE" : "INACTIVE");
+    }
+
+    if (run_job)
+    {
+        run_job = false;
         periodicJob();
     }
 
@@ -342,7 +357,7 @@ void loop()
     {
         last_adc_value = joystick_read_value;
 
-        if (abs(joystick_read_value) > (STEPPER_MAX_SPEED >> 2))
+        if (abs(joystick_read_value) > STEPPER_MAX_SPEED / 4)
         {
             setVelocity(joystick_read_value);
         }
