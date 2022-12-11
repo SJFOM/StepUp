@@ -15,14 +15,24 @@
 
 #define PIN_TMC_POWER  (5U)
 #define PIN_TMC_ENABLE (32U)
+
+#define PIN_ANALOG_JOYSTICK_X (13U)  // DIO2
+#define PIN_ANALOG_JOYSTICK_Y (26U)  // DIO4
+#define PIN_JOYSTICK_BUTTON   (25U)  // DIO3
 /*************************/
 /* Pin definitions - END */
 /*************************/
 
 #define TIMER0_INTERVAL_MS 1000
 
+#define STEPPER_MAX_SPEED (200000UL)
+
 // Init ESP32 timer 0
 ESP32Timer ITimer0(0);
+
+volatile bool joystick_active = false;
+volatile long joystick_read_value = 0;
+long joystick_offset = 0;
 
 /**************************/
 /* User variables - START */
@@ -58,8 +68,11 @@ bool setCurrent(uint8_t current)
     {
         return false;
     }
-    Serial.print("New MaxCurrent set: ");
-    Serial.println(current);
+    if (!joystick_active)
+    {
+        Serial.print("New MaxCurrent set: ");
+        Serial.println(current);
+    }
 
     uint32_t value = 1 << TMC2300_IHOLDDELAY_SHIFT |
                      ((current << TMC2300_IRUN_SHIFT) & TMC2300_IRUN_MASK) |
@@ -75,9 +88,12 @@ bool setVelocity(int velocity)
         return false;
     }
 
-    // VACTUAL: 2^24 - 1
-    Serial.print("New TargetVelocity set: ");
-    Serial.println(velocity);
+    if (!joystick_active)
+    {
+        // VACTUAL: 2^24 - 1
+        Serial.print("New TargetVelocity set: ");
+        Serial.println(velocity);
+    }
 
     s_tmc_config.target_velocity = velocity;
 
@@ -103,13 +119,16 @@ void setEnable(int enable)
 {
     s_tmc_config.enable = enable != 0;
 
-    if (s_tmc_config.enable)
+    if (!joystick_active)
     {
-        Serial.println("Enable Motor");
-    }
-    else
-    {
-        Serial.println("Disable Motor");
+        if (s_tmc_config.enable)
+        {
+            Serial.println("Enable Motor");
+        }
+        else
+        {
+            Serial.println("Disable Motor");
+        }
     }
 
     digitalWrite(PIN_TMC_ENABLE, s_tmc_config.enable ? HIGH : LOW);
@@ -165,6 +184,21 @@ bool IRAM_ATTR TimerHandler0(void *timerNo)
 {
     s_run_job = true;
     return true;
+}
+
+bool IRAM_ATTR TimerHandler0Analog(void *timerNo)
+{
+    unsigned adc_read = analogRead(PIN_ANALOG_JOYSTICK_X);
+    joystick_read_value =
+        map(adc_read, 0, 4095, -STEPPER_MAX_SPEED, STEPPER_MAX_SPEED);
+    return true;
+}
+
+void joystickButtonHandler()
+{
+    joystick_active = !joystick_active;
+    s_tmc_config.enable = joystick_active;
+    digitalWrite(PIN_TMC_ENABLE, s_tmc_config.enable ? HIGH : LOW);
 }
 
 /*************************/
@@ -229,6 +263,17 @@ void setup()
         Serial.println(F("Can't set ITimer0. Select another freq. or timer"));
     }
 
+    // Interval in microsecs
+    if (ITimer0.attachInterruptInterval(100 * 1000, TimerHandler0Analog))
+    {
+        Serial.print(F("Starting  ITimer0 OK, millis() = "));
+        Serial.println(millis());
+    }
+    else
+    {
+        Serial.println(F("Can't set ITimer0. Select another freq. or timer"));
+    }
+
     // Power on TMC2300 IC
     tmcPowerOn(true);
 
@@ -257,17 +302,59 @@ void setup()
             ;
         }
     }
+
+    // set the resolution to 12 bits (0-4096)
+    analogReadResolution(12);
+    pinMode(PIN_JOYSTICK_BUTTON, INPUT_PULLUP);
+
+    attachInterrupt(PIN_JOYSTICK_BUTTON, joystickButtonHandler, FALLING);
+
+    Serial.println("ADC calibration step");
+    // const unsigned pin_in_test = PIN_ANALOG_JOYSTICK_X;
+    // Serial.println("Setting up ADC pins");
+    unsigned long adc_accumulator = 0;
+    for (int i = 0; i <= 10; i++)
+    {
+        // uint32_t x_axis = analogRead(PIN_ANALOG_JOYSTICK_X);
+        // uint32_t y_axis = analogRead(PIN_ANALOG_JOYSTICK_Y);
+        // bool btn = (bool)digitalRead(PIN_JOYSTICK_BUTTON);
+        // Serial.printf("%d - %d - %d\n", x_axis, y_axis, btn);
+        adc_accumulator += analogRead(PIN_ANALOG_JOYSTICK_X);
+        delay(20);
+    }
+    joystick_offset = map(adc_accumulator / 10,
+                          0,
+                          4095,
+                          -STEPPER_MAX_SPEED,
+                          STEPPER_MAX_SPEED);
 }
 
 void loop()
 {
+    static unsigned long last_adc_value = 0;
     if (s_run_job)
     {
         s_run_job = false;
         periodicJob();
     }
 
-    if (Serial.available())
+    if (joystick_active && joystick_read_value != last_adc_value)
+    {
+        last_adc_value = joystick_read_value;
+
+        if (abs(joystick_read_value) > (STEPPER_MAX_SPEED >> 2))
+        {
+            setVelocity(joystick_read_value);
+        }
+        else
+        {
+            setVelocity(0);
+        }
+        setCurrent(20);
+        setEnable(true);
+    }
+
+    if (Serial.available() && !joystick_active)
     {
         String input = Serial.readString();
         switch (input.toInt())

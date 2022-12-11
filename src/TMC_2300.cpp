@@ -71,19 +71,7 @@ int32_t tmc2300_readInt(uint8_t address)
     data[2] = address;
     data[3] = tmc_CRC8(data, 3, 0);
 
-    uint8_t data0[8] = {0};
-    for (int i = 0; i < 8; i++)
-    {
-        data0[i] = data[i];
-    }
-
     tmc2300_readWriteArray(data, 4, 8);
-
-    for (int i = 0; i < 8; i++)
-    {
-        ;
-        // Serial.printf("%d : 0x%02x -> 0x%02x\n", i, data0[i], data[i]);
-    }
 
     // Byte 0: Sync nibble correct?
     if (data[0] != 0x05) return -1;
