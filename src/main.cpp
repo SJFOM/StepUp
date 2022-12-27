@@ -4,6 +4,14 @@
 #include "Functions.h"
 #include "TMC2300.h"
 
+/*******************************/
+/* Runtime definitions - START */
+/*******************************/
+#define PASSTHROUGH_MODE true
+/*****************************/
+/* Runtime definitions - END */
+/*****************************/
+
 /***************************/
 /* Pin definitions - START */
 /***************************/
@@ -16,6 +24,11 @@
 #define PIN_TMC_POWER  (5U)
 #define PIN_TMC_ENABLE (32U)
 
+#if (PASSTHROUGH_MODE)
+#    define PIN_PROXY_TMC_POWER  (14U)  // DIO0
+#    define PIN_PROXY_TMC_ENABLE (19U)  // DIO1
+#endif
+
 #define PIN_ANALOG_JOYSTICK_X (13U)  // DIO2
 #define PIN_ANALOG_JOYSTICK_Y (26U)  // DIO4
 #define PIN_JOYSTICK_BUTTON   (25U)  // DIO3
@@ -23,17 +36,14 @@
 /* Pin definitions - END */
 /*************************/
 
-#define TIMER0_INTERVAL_MS 1000
-
-#define STEPPER_MAX_SPEED (250000UL)
-
-// Init ESP32 timer 0
-ESP32Timer ITimer0(0);
-
-volatile bool joystick_active = false;
-volatile long joystick_read_value = 0;
-long joystick_offset = 0;
-unsigned long last_button_timestamp = 0;
+/********************************/
+/* Hardware definitions - START */
+/********************************/
+#define TIMER0_INTERVAL_MS (1000UL)
+#define STEPPER_MAX_SPEED  (250000UL)
+/******************************/
+/* Hardware definitions - END */
+/******************************/
 
 /**************************/
 /* User variables - START */
@@ -46,9 +56,19 @@ static struct tmc_config
     bool enable = false;
 } s_tmc_config;
 
-// Job processing boolean
+// ESP32 Timer 0 Hardware
+ESP32Timer ITimer0(0);
+
+// Job processing booleans
 volatile bool run_job = false;
 volatile bool print_once = false;
+
+// Joystick variables
+volatile bool joystick_active = false;
+volatile long joystick_read_value = 0;
+long joystick_offset = 0;
+unsigned long joystick_button_timestamp = 0;
+
 /************************/
 /* User variables - END */
 /************************/
@@ -133,15 +153,33 @@ void setEnable(int enable)
         }
     }
 
-    digitalWrite(PIN_TMC_ENABLE, s_tmc_config.enable ? HIGH : LOW);
+    tmcEnablePinControl();
     delay(100);
 }
 
 void tmcPowerOn(bool power_on)
 {
-    // Power pin is active low
-    digitalWrite(PIN_TMC_POWER, (power_on) ? LOW : HIGH);
+    tmcPowerPinControl(power_on);
     delay(100);
+}
+
+void tmcEnablePinControl()
+{
+    uint8_t enable_pin_value = s_tmc_config.enable ? HIGH : LOW;
+#if (PASSTHROUGH_MODE)
+    enable_pin_value = digitalRead(PIN_PROXY_TMC_ENABLE);
+#endif
+    digitalWrite(PIN_TMC_ENABLE, enable_pin_value);
+}
+
+void tmcPowerPinControl(bool power_on)
+{
+    // Power pin is active low
+    uint8_t power_pin_value = (power_on) ? LOW : HIGH;
+#if (PASSTHROUGH_MODE)
+    power_pin_value = digitalRead(PIN_PROXY_TMC_POWER);
+#endif
+    digitalWrite(PIN_TMC_POWER, power_pin_value);
 }
 
 /*****************************/
@@ -198,9 +236,9 @@ bool IRAM_ATTR TimerHandler0Analog(void *timerNo)
 
 void joystickButtonHandler()
 {
-    if (millis() - last_button_timestamp > 500)
+    if (millis() - joystick_button_timestamp > 500)
     {
-        last_button_timestamp = millis();
+        joystick_button_timestamp = millis();
         print_once = true;
         joystick_active = !joystick_active;
         s_tmc_config.enable = joystick_active;
@@ -244,9 +282,17 @@ void setup()
     // Enable Pin
     pinMode(PIN_TMC_ENABLE, OUTPUT);
 
+#if (PASSTHROUGH_MODE)
+    // Enable Pin
+    pinMode(PIN_PROXY_TMC_POWER, INPUT);
+    // Enable Pin
+    pinMode(PIN_PROXY_TMC_ENABLE, INPUT);
+#endif
+
     // Initialize CRC calculation for TMC2300 UART datagrams
     tmc_fillCRC8Table(0x07, true, 0);
 
+#if (false == PASSTHROUGH_MODE)
     Serial.print(F("\nStarting TimerInterrupt on "));
     Serial.println(ARDUINO_BOARD);
     Serial.println(ESP32_TIMER_INTERRUPT_VERSION);
@@ -280,6 +326,7 @@ void setup()
     {
         Serial.println(F("Can't set ITimer0. Select another freq. or timer"));
     }
+#endif
 
     // Power on TMC2300 IC
     tmcPowerOn(true);
@@ -310,6 +357,7 @@ void setup()
         }
     }
 
+#if (false == PASSTHROUGH_MODE)
     // set the resolution to 12 bits (0-4096)
     analogReadResolution(12);
     pinMode(PIN_JOYSTICK_BUTTON, INPUT_PULLUP);
@@ -334,12 +382,15 @@ void setup()
                           4095,
                           -STEPPER_MAX_SPEED,
                           STEPPER_MAX_SPEED);
+#endif
 }
 
 void loop()
 {
     static unsigned long last_adc_value = 0;
 
+#if (PASSTHROUGH_MODE)
+#else
     if (print_once)
     {
         print_once = false;
@@ -412,4 +463,5 @@ void loop()
         Serial.print("\n\n");
         printMotorControlOptions();
     }
+#endif
 }
