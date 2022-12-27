@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <Wire.h>
 #include "CRC.h"
 #include "ESP32TimerInterrupt.h"
 #include "Functions.h"
@@ -72,6 +73,25 @@ unsigned long joystick_button_timestamp = 0;
 /************************/
 /* User variables - END */
 /************************/
+
+/*******************************/
+/* Function prototypes - START */
+/*******************************/
+void receiveEvent(int);
+
+// TMC Register control
+bool setCurrent(uint8_t);
+bool setVelocity(int);
+bool setDirection(bool);
+
+// TMC Pin control
+void setEnable(int);
+void tmcPowerOn(bool);
+void tmcEnablePinControl();
+void tmcPowerPinControl(bool);
+/*****************************/
+/* Function prototypes - END */
+/*****************************/
 
 /*******************************/
 /* TMC control methods - START */
@@ -287,6 +307,9 @@ void setup()
     pinMode(PIN_PROXY_TMC_POWER, INPUT);
     // Enable Pin
     pinMode(PIN_PROXY_TMC_ENABLE, INPUT);
+
+    Wire.begin(4);                 // join i2c bus with address #4
+    Wire.onReceive(receiveEvent);  // register event
 #endif
 
     // Initialize CRC calculation for TMC2300 UART datagrams
@@ -464,4 +487,17 @@ void loop()
         printMotorControlOptions();
     }
 #endif
+}
+
+// function that executes whenever data is received from master
+// this function is registered as an event, see setup()
+void receiveEvent(int howMany)
+{
+    while (1 < Wire.available())  // loop through all but the last
+    {
+        char c = Wire.read();  // receive byte as a character
+        Serial.print(c);       // print the character
+    }
+    int x = Wire.read();  // receive byte as an integer
+    Serial.println(x);    // print the integer
 }
