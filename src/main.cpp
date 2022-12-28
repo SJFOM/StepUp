@@ -40,6 +40,7 @@
 /********************************/
 /* Hardware definitions - START */
 /********************************/
+#define I2C_SLAVE_ADDRESS  (uint8_t)(5U)
 #define TIMER0_INTERVAL_MS (1000UL)
 #define STEPPER_MAX_SPEED  (250000UL)
 /******************************/
@@ -56,6 +57,20 @@ static struct tmc_config
     bool direction = true;
     bool enable = false;
 } s_tmc_config;
+
+// I2C message data
+static struct i2c_packet
+{
+    uint8_t buf[16U];
+    uint8_t buf_idx = 0;
+} s_i2c_packet;
+const uint8_t i2c_packet_id_byte0_value = 0xAB;
+const uint8_t i2c_packet_id_byte1_value = 0xCD;
+const uint8_t i2c_packet_id_byte0_idx = 0;
+const uint8_t i2c_packet_id_byte1_idx = 1;
+const uint8_t i2c_packet_read_length_idx = 2;
+const uint8_t i2c_packet_write_length_idx = 3;
+const uint8_t i2c_packet_data_idx = 4;
 
 // ESP32 Timer 0 Hardware
 ESP32Timer ITimer0(0);
@@ -308,8 +323,8 @@ void setup()
     // Enable Pin
     pinMode(PIN_PROXY_TMC_ENABLE, INPUT);
 
-    Wire.begin(4);                 // join i2c bus with address #4
-    Wire.onReceive(receiveEvent);  // register event
+    Wire.begin(I2C_SLAVE_ADDRESS);  // join i2c bus with address
+    Wire.onReceive(receiveEvent);   // register event
 #endif
 
     // Initialize CRC calculation for TMC2300 UART datagrams
@@ -493,11 +508,27 @@ void loop()
 // this function is registered as an event, see setup()
 void receiveEvent(int howMany)
 {
-    while (1 < Wire.available())  // loop through all but the last
+    // Receive bytes
+    while (Wire.available())  // loop through all received bytes
     {
-        char c = Wire.read();  // receive byte as a character
-        Serial.print(c);       // print the character
+        s_i2c_packet.buf[s_i2c_packet.buf_idx++] = Wire.read();
     }
-    int x = Wire.read();  // receive byte as an integer
-    Serial.println(x);    // print the integer
+
+    // Check the received packet is valid
+    if ((s_i2c_packet.buf[i2c_packet_id_byte0_idx] ==
+         i2c_packet_id_byte0_value) &&
+        (s_i2c_packet.buf[i2c_packet_id_byte1_idx] ==
+         i2c_packet_id_byte1_value))
+    {
+        uint8_t write_length = s_i2c_packet.buf[i2c_packet_write_length_idx];
+        uint8_t read_length = s_i2c_packet.buf[i2c_packet_read_length_idx];
+
+        // Send our bytes over UART as normal
+        tmc2300_readWriteArray(&s_i2c_packet.buf[i2c_packet_data_idx],
+                               write_length,
+                               read_length);
+
+        // Return the received bytes (via UART) back to master over I2C
+        Wire.write(&s_i2c_packet.buf[i2c_packet_data_idx], read_length);
+    }
 }
